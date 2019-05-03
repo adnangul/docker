@@ -1,0 +1,12 @@
+{
+
+    "name": "helloworld",  
+    "version": "1.0.0",  
+    "description": "Dockerized node.js app",  
+    "main": "index.js",  
+    "author": "",  
+    "license": "ISC",  
+    "dependencies": {  
+      "express": "^4.16.4"  
+    }
+}
