@@ -1,0 +1,260 @@
+Docker commands ref
+--------------------
+
+> docker info
+> docker images  // list images
+> docker ps   // list containers
+
+Running hello world - and verify thing are working
+> docker run hello-world
+
+A bit next - run linuex alpine and connect to shell
+> docker run -it alpine sh
+
+---------
+images
+---------
+build image  -- -t for tag
+> docker image build -t web1 .
+
+list images
+> docker image ls
+> docker images
+
+inspect image
+> docker image inspect web1
+
+tag image
+> docker image tag web1 adnangul/web1:latest
+
+push image
+> docker image push  adnangul/web1:latest
+
+pull image
+> docker pull <adnangul/web1:latest>
+
+delete images -- -f for force
+> docker image rm -f 196309d1aaff
+
+---------
+containers
+-----------
+list running containers
+> docker container ls
+> docker ps
+
+run 
+> docker container run -it -p 5000:5000 -e FLASK_APP=app.py web1
+    // -it for interactive ,ctrl-c, colors etc
+    // -p for port binding host:container
+    // -e for passing env variables, can pass multiples
+    // 
+or - for auto removing stopped containers --rm, --name for custome name
+> docker container run -it --rm --name web1 -p 5000:5000 -e FLASK_APP=app.py web1
+
+or in detached mode with -d
+> docker container run -it --rm --name web1 -p 5000:5000 -e FLASK_APP=app.py -d web1
+
+to see logs in aboeb case
+> docker container logs web1
+> docker container logs -f web1    // -f for tail
+
+we can also run like  - omitting container port will auto bind the port from container, --restart will take care fo crashes
+> docker container run -it --name web1 -p 5000 -e FLASK_APP=app.py --restart on-failure  web1
+
+for stats
+> docker container stats
+
+----------
+
+running with volumes
+--------------------
+let run as below
+    // flask debug is nothing to do with docker for for Flask itself to enable code reload/debug
+    // -v for voulme - $PWD (current path) : /app (the path in container) - current path will be mounted into containers path
+> docker container run -it --rm --name web1 -p 5000:5000 -e FLASK_APP=app.py -e FLASK_DEBUG=1 -v $PWD:/app web1
+> 
+
+getting to docker 
+-----------------
+docker container exec -it web1 bash
+docker container exec -it web1 sh   //sh for alpine or etc
+
+
+--------------------
+Network
+------------------
+ list existing networks
+ > docker network ls
+ 
+ inpsect network
+ > docker network inspect bridge
+
+Let's develop enhance the app with persisting the counter in redis
+
+1. Pull redis image and run
+    > docker pull redis:5.0-alpine
+
+     //-itd , d is for detached
+    > docker container run --rm -itd -p 6379:6379 --name redis redis:5.0-alpine
+2. If you have run the above inspect command you might have seen nothing in container, if you try again you will find red
+
+3. Build the iamge web2 from '09-linking-containers-with-docker-networks'
+    > docker image build -t web2 .
+4. Run the new image as
+    > docker container run -itd --rm -p 5000:5000 -e FLASK_APP=app.py -e FLASK_DEBUG=1 -v $PWD:/app --name web2 web2
+    
+Now you may inspect again, both containers will be running on default 'bridge' network.
+You can chekc the ip for redis for an example as
+    > docker exec redis ifconfig
+    
+    Try same for web2
+    > docker exec web2 ifconfig
+    
+    Troubleshoot for alpine based images
+    if didn't work, add following lines at line2 to your docker file, since docker recently remove ifconfig and ping from alpine images
+    
+    RUN apk update && apk add iputils
+    RUN apt-get update && apt-get install -y net-tools iputils-ping
+
+
+    You may also try to ping one contianer from another
+    > docker exec redis ping 172.17.0.2
+    
+    see hosts
+    > docker exec redis cat /etc/hosts
+    
+
+5. Create a new network and run both instance in that
+    > docker network create --driver bridge firstnetwork
+    
+    > docker container run --rm -itd -p 6379:6379 --net firstnetwork --name redis redis:5.0-alpine
+    > docker container run -itd --rm -p 5000:5000 -e FLASK_APP=app.py -e FLASK_DEBUG=1 -v $PWD:/app --net firstnetwork  --name web2 web2
+    
+6. acces the app localhost:5000 
+    it will keep incrementing the counter on each reload
+    
+You can actually get into redis and see the details 
+    > docker exec -it redis redis-cli
+    
+    > KEYS *
+    > INCRBY web2_counter 1000
+    
+    
+    
+If we restart the redis, we will lose counter, how to preserver. Let perisst data to your docker host - 
+
+1. Create named volume
+    > docker volume create web2_redis
+    > docker volume ls   //list volumes
+    > docker volume inspect web2_redis
+    
+    // to actual see the volumes on macbook - follow 
+        https://timonweb.com/posts/getting-path-and-accessing-persistent-volumes-in-docker-for-mac/
+        
+    1. We need to "screen into" the Docker driver by executing a command: 
+        > screen ~/Library/Containers/com.docker.docker/Data/com.docker.driver.amd64-linux/tty
+    2. u should see a blank screen, just press Enter , and after a while, you should see a command line prompt: docker-desktop:~#
+    3. Now you're inside Docker's VM and you can cd into volumes dir by typing: 
+        cd /var/lib/docker/volumes
+        
+    // if above screen command doesn't work, try below path 
+    > screen ~/Library/Containers/com.docker.docker/Data/vms/0/tty
+    
+     // to exit from screen, Ctrl+a k Kill current the window. A confirmation of y/n will be snowed before the window really killed.
+      // https://hostpresto.com/community/tutorials/how-to-use-screen-on-linux/
+    
+2. Start redis with named volume
+    > docker container run --rm -itd -p 6379:6379 --net firstnetwork --name redis -v web2_redis:/data redis:5.0-alpine
+    
+3. Start the flask app as before and access in browser couple of time
+
+4. Now save the redis data  -- // redis is in-memory so doesn't save on disk by default unless configured, in below example we are doing it manually
+    > docker exec -it redis redis-cli SAVE
+
+5. restart redis, and hit the web, the counter will not restart
+
+
+Sharing data between containers
+----------------------------------
+
+To share data between containers we added following and web2 docker before last line or look at '11-sharing-data-between-containers'
+
+    VOLUME ["/app/public"]flas as below
+    
+we can also do it without modifying docker file, by passing another -v 
+    > docker container run -itd --rm -p 5000:5000 -e FLASK_APP=app.py -e FLASK_DEBUG=1 -v $PWD:/app -v /app/public --net firstnetwork --name web2 web2
+
+rebuild image
+
+1. Start web2 as we did before
+2. Start redis with slight modification as  - note --volumes-from web2
+    > docker container run --rm -itd -p 6379:6379 --net firstnetwork --name redis -v web2_redis:/data --volumes-from web2 redis:5.0-alpine
+    
+3. now sh into redis as below and verify
+    > docker exec -it redis sh
+    > cd /app/public/
+    > ls -la
+    
+    you should see the volume and css file as well
+    
+
+Running Scripts when a Container starts
+--------------------------------------
+Entry Point
+    
+    
+----------
+clean up
+----------
+
+to stop all active contains
+>docker container stop $(docker container ls -a -q)
+
+// disk usage
+>  docker system df   // size
+
+//info
+>  docker system info
+
+// cleanup to reclaim disk space
+> docker system prune
+> docker system prune -f
+> docker system prune -a
+
+
+------------------------------------
+
+Docker Compose
+------------------------------------
+
+Build images
+> docker-compose build
+
+Pull images referred
+> docker-compose pull
+
+and running both, we can name if want to start specific, redis, web or multiple web redis
+> docker-compose up
+
+access the web page to test
+
+stopping, press ctrl+c , if it errors out try below
+> docker-compose stop
+
+We could have done all this as , -d for detach
+> docker-compose up --build -d 
+
+list running containers
+> docker-compose ps
+
+logs
+> docker-compose logs -f
+
+restart all
+> docker-compose restart
+
+for exec and other commands
+> docker-compose exec web ls -la
+> docker-compose exec web sh    //for shell, note we don't need to add -it
+
